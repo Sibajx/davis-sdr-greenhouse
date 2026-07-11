@@ -1,0 +1,11 @@
+# davis_monitor.py utiliza únicamente la librería estándar de Python 3.9+:
+#   subprocess, curses, threading, time, os, re, csv, sys, signal, select,
+#   struct, logging, enum, dataclasses, collections, datetime, typing
+#
+# No hay dependencias externas de pip.
+#
+# Dependencia externa NO instalable vía pip:
+#   rtldavis  -> binario de terceros que decodifica la telemetría RF de la
+#                estación Davis Vantage Pro 2. Debe compilarse/instalarse por
+#                separado y estar disponible en el PATH del sistema.
+#                Referencia: https://github.com/rtldavis

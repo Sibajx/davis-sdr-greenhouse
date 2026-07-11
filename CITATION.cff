@@ -1,0 +1,39 @@
+cff-version: 1.2.0
+message: "Si utilizas este software o repositorio, por favor cita el artículo asociado."
+title: "A Low-Cost SDR-Based Edge IoT Architecture for Real-Time Decoding of Weather Telemetry in Cyber-Physical Greenhouse Drying Systems"
+type: software
+authors:
+  - family-names: "Juárez-Rosales"
+    given-names: "Mario U."
+  - family-names: "Ramírez-Sibaja"
+    given-names: "Alexis"
+  - family-names: "Cruz-Martínez"
+    given-names: "María S."
+  - family-names: "Nicolas-Bautista"
+    given-names: "Hariel"
+  - family-names: "Sánchez-Domínguez"
+    given-names: "Diego"
+  - family-names: "Hernández-Flores"
+    given-names: "Omar A."
+    email: "ohernandez.ciencias@uabjo.mx"
+repository-code: "https://github.com/Sibajx/davis-sdr-greenhouse"
+license: MIT
+preferred-citation:
+  type: article
+  title: "A Low-Cost SDR-Based Edge IoT Architecture for Real-Time Decoding of Weather Telemetry in Cyber-Physical Greenhouse Drying Systems"
+  authors:
+    - family-names: "Juárez-Rosales"
+      given-names: "Mario U."
+    - family-names: "Ramírez-Sibaja"
+      given-names: "Alexis"
+    - family-names: "Cruz-Martínez"
+      given-names: "María S."
+    - family-names: "Nicolas-Bautista"
+      given-names: "Hariel"
+    - family-names: "Sánchez-Domínguez"
+      given-names: "Diego"
+    - family-names: "Hernández-Flores"
+      given-names: "Omar A."
+  journal: "International Journal of Sustainable Agricultural Management and Informatics"
+  status: "in-review"
+  notes: "Actualiza volume/issue/year/doi una vez asignados por la revista."
