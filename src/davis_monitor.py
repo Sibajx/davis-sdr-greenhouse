@@ -2,32 +2,30 @@
 davis_monitor.py
 =================
 
-Daemon de adquisición SDR para telemetría meteorológica de una estación
-Davis Vantage Pro 2 (banda ISM 902-928 MHz, FHSS), usado como capa de borde
-(edge) de un sistema ciberfísico de secado en invernadero.
+SDR acquisition daemon for weather telemetry from a Davis Vantage Pro 2
+station (902-928 MHz ISM band, FHSS), used as the edge layer of a
+cyber-physical greenhouse drying system.
 
-Flujo general (ver docs/arquitectura.md para el diagrama completo):
+General flow (see docs/architecture.md for the full diagram):
 
-    1. Hilo SDR (lector_rtldavis_worker): lanza el binario externo
-       `rtldavis -tf US` vía subprocess y lee payloads hexadecimales de su
-       stdout. Un watchdog reinicia el subproceso si no hay actividad de RF
-       dentro de TIEMPO_MAX_ESPERA_SENSORES segundos.
-    2. Validación CRC-16 (DecodificadorDavis.validar_crc): cada trama de
-       8 bytes se valida contra los 2 últimos bytes (CRC recibido); las
-       tramas corruptas se descartan antes de decodificar.
-    3. Decodificación (NucleoMonitoreo.procesar_trama): extrae viento,
-       temperatura, humedad, radiación solar, índice UV y lluvia según el
-       tipo de paquete (TipoPaquete), usando desplazamientos de bits sobre
-       el payload.
-    4. Persistencia (GestorAlmacenamiento): respaldo local en CSV y logging
-       rotativo; la ingesta a base de datos de series temporales (ej.
-       InfluxDB) ocurre cada ~60 s aguas abajo.
-    5. Interfaz (MotorInterfazTUI): panel de consola en tiempo real basado
-       en curses, con brújula de viento, sparklines de tendencias y estado
-       del watchdog.
+    1. SDR thread (rtldavis_reader_worker): launches the external binary
+       `rtldavis -tf US` via subprocess and reads hexadecimal payloads from
+       its stdout. A watchdog restarts the subprocess if there is no RF
+       activity within MAX_SENSOR_WAIT_TIME seconds.
+    2. CRC-16 validation (DavisDecoder.validate_crc): every 8-byte frame is
+       validated against its last 2 bytes (received CRC); corrupted frames
+       are discarded before decoding.
+    3. Decoding (MonitoringCore.process_frame): extracts wind, temperature,
+       humidity, solar radiation, UV index and rain according to the packet
+       type (PacketType), using bit shifts over the payload.
+    4. Persistence (StorageManager): local CSV backup and rotating logging;
+       ingestion into a time-series database (e.g. InfluxDB) happens
+       downstream every ~60 s.
+    5. Interface (TUIInterfaceEngine): real-time console panel based on
+       curses, with a wind compass, trend sparklines and watchdog status.
 
-Requiere Python 3.9+ (solo librería estándar) y el binario externo
-`rtldavis` disponible en el PATH del sistema. Ver requirements.txt.
+Requires Python 3.9+ (standard library only) and the external binary
+`rtldavis` available on the system PATH. See requirements.txt.
 """
 
 import subprocess
@@ -49,12 +47,12 @@ from collections import deque
 from datetime import datetime
 from typing import Dict, Optional
 
-# === CONFIGURACIÓN GLOBAL ===
-DIR_CAPTURAS: str = os.path.expanduser("~/capturas_davis")
-os.makedirs(DIR_CAPTURAS, exist_ok=True)
+# === GLOBAL CONFIGURATION ===
+CAPTURES_DIR: str = os.path.expanduser("~/davis_captures")
+os.makedirs(CAPTURES_DIR, exist_ok=True)
 
 # === LOGGING ===
-LOG_FILE = os.path.join(DIR_CAPTURAS, "davis_monitor.log")
+LOG_FILE = os.path.join(CAPTURES_DIR, "davis_monitor.log")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -66,18 +64,18 @@ logging.basicConfig(
             backupCount=5,
             encoding='utf-8'
         )
-        # BÓRRALE LA LÍNEA QUE DECÍA: logging.StreamHandler(sys.stdout)
+        # DELETE THE LINE THAT SAID: logging.StreamHandler(sys.stdout)
     ]
 )
 
 logger = logging.getLogger("DavisMonitor")
 
-# ¡CORRECCIÓN APLICADA AQUÍ! (Tu estación usa el ID 0)
-TX_ID_OBJETIVO: str = "0"
-TIEMPO_MAX_ESPERA_SENSORES: int = 300 
+# FIX APPLIED HERE! (your station uses ID 0)
+TARGET_TX_ID: str = "0"
+MAX_SENSOR_WAIT_TIME: int = 300
 
-class TipoPaquete(Enum):
-    VIENTO_RAFAGA  = 0x9
+class PacketType(Enum):
+    WIND_GUST      = 0x9
     TEMPERATURE    = 0x8
     HUMIDITY       = 0xA
     RAIN_RATE      = 0x5
@@ -86,138 +84,138 @@ class TipoPaquete(Enum):
     UV_INDEX       = 0x4
 
 @dataclass
-class TelemetriaEstacion:
+class StationTelemetry:
     __slots__ = (
-        'viento_vel', 'viento_dir', 'viento_cardinal', 'rafaga',
-        'temp', 'humedad', 'tasa_lluvia', 'estado_lluvia',
-        'humedad_hoja', 'uv', 'meds', 'solar', 'tx_id', 'bateria'
+        'wind_speed', 'wind_dir', 'wind_cardinal', 'gust',
+        'temp', 'humidity', 'rain_rate', 'rain_state',
+        'leaf_moisture', 'uv', 'meds', 'solar', 'tx_id', 'battery'
     )
-    viento_vel: str; viento_dir: str; viento_cardinal: str; rafaga: str
-    temp: str; humedad: str; tasa_lluvia: str; estado_lluvia: str
-    humedad_hoja: str; uv: str; meds: str; solar: str; tx_id: str; bateria: str
+    wind_speed: str; wind_dir: str; wind_cardinal: str; gust: str
+    temp: str; humidity: str; rain_rate: str; rain_state: str
+    leaf_moisture: str; uv: str; meds: str; solar: str; tx_id: str; battery: str
 
     @classmethod
-    def inicializar_vacio(cls) -> 'TelemetriaEstacion':
+    def init_empty(cls) -> 'StationTelemetry':
         return cls(
-            viento_vel="--", viento_dir="--", viento_cardinal="--", rafaga="--",
-            temp="--", humedad="--", tasa_lluvia="--", estado_lluvia="--",
-            humedad_hoja="--", uv="--", meds="--", solar="--", tx_id="-", bateria="-"
+            wind_speed="--", wind_dir="--", wind_cardinal="--", gust="--",
+            temp="--", humidity="--", rain_rate="--", rain_state="--",
+            leaf_moisture="--", uv="--", meds="--", solar="--", tx_id="-", battery="-"
         )
-    
-    def clonar(self) -> 'TelemetriaEstacion':
-        """Crea una copia física de los datos para liberar el Lock rápidamente."""
-        return TelemetriaEstacion(
-            viento_vel=self.viento_vel, viento_dir=self.viento_dir, viento_cardinal=self.viento_cardinal,
-            rafaga=self.rafaga, temp=self.temp, humedad=self.humedad, tasa_lluvia=self.tasa_lluvia,
-            estado_lluvia=self.estado_lluvia, humedad_hoja=self.humedad_hoja, uv=self.uv,
-            meds=self.meds, solar=self.solar, tx_id=self.tx_id, bateria=self.bateria
+
+    def clone(self) -> 'StationTelemetry':
+        """Creates a physical copy of the data to release the Lock quickly."""
+        return StationTelemetry(
+            wind_speed=self.wind_speed, wind_dir=self.wind_dir, wind_cardinal=self.wind_cardinal,
+            gust=self.gust, temp=self.temp, humidity=self.humidity, rain_rate=self.rain_rate,
+            rain_state=self.rain_state, leaf_moisture=self.leaf_moisture, uv=self.uv,
+            meds=self.meds, solar=self.solar, tx_id=self.tx_id, battery=self.battery
         )
 
 @dataclass
-class EstadoSDR:
-    freq: str = "Buscando..."
-    canal: str = "-"
-    paquetes: int = 0
-    paquetes_descartados_crc: int = 0
-    paquetes_descartados_id: int = 0
-    reinicios_rtldavis: int = 0
-    ultimo_reinicio: str = "Nunca"
-    ultimo_guardado_csv: float = 0.0
-    estado_csv: str = "Esperando..."
-    ultima_actividad_rf: float = field(default_factory=time.time)
-    ultima_trama: str = ""
+class SDRState:
+    freq: str = "Searching..."
+    channel: str = "-"
+    packets: int = 0
+    crc_rejected_packets: int = 0
+    id_rejected_packets: int = 0
+    rtldavis_restarts: int = 0
+    last_restart: str = "Never"
+    last_csv_write: float = 0.0
+    csv_status: str = "Waiting..."
+    last_rf_activity: float = field(default_factory=time.time)
+    last_frame: str = ""
 
-    def clonar(self) -> 'EstadoSDR':
-        return EstadoSDR(
-            freq=self.freq, canal=self.canal, paquetes=self.paquetes,
-            paquetes_descartados_crc=self.paquetes_descartados_crc,
-            paquetes_descartados_id=self.paquetes_descartados_id,
-            reinicios_rtldavis=self.reinicios_rtldavis, ultimo_reinicio=self.ultimo_reinicio,
-            ultimo_guardado_csv=self.ultimo_guardado_csv, estado_csv=self.estado_csv,
-            ultima_actividad_rf=self.ultima_actividad_rf, ultima_trama=self.ultima_trama
+    def clone(self) -> 'SDRState':
+        return SDRState(
+            freq=self.freq, channel=self.channel, packets=self.packets,
+            crc_rejected_packets=self.crc_rejected_packets,
+            id_rejected_packets=self.id_rejected_packets,
+            rtldavis_restarts=self.rtldavis_restarts, last_restart=self.last_restart,
+            last_csv_write=self.last_csv_write, csv_status=self.csv_status,
+            last_rf_activity=self.last_rf_activity, last_frame=self.last_frame
         )
 
-class AnalizadorTendencias:
+class TrendAnalyzer:
     def __init__(self, maxlen: int = 10):
-        self._historial = deque(maxlen=maxlen)
+        self._history = deque(maxlen=maxlen)
 
-    def registrar_y_obtener_flecha(self, valor_str: str) -> str:
+    def record_and_get_arrow(self, value_str: str) -> str:
         try:
-            valor = float(valor_str)
-            if not self._historial:
-                self._historial.append(valor)
+            value = float(value_str)
+            if not self._history:
+                self._history.append(value)
                 return "─"
-            promedio = sum(self._historial) / len(self._historial)
-            self._historial.append(valor)
-            if valor > promedio + 0.1: return "▲"
-            elif valor < promedio - 0.1: return "▼"
+            average = sum(self._history) / len(self._history)
+            self._history.append(value)
+            if value > average + 0.1: return "▲"
+            elif value < average - 0.1: return "▼"
             return "─"
         except ValueError:
             return "─"
 
-class GestorAlmacenamiento:
-    def __init__(self, directorio: str):
-        self.directorio = directorio
+class StorageManager:
+    def __init__(self, directory: str):
+        self.directory = directory
 
-    def registrar_datos(self, hub: TelemetriaEstacion) -> None:
-        fecha_hoy = datetime.now().strftime('%Y-%m-%d')
+    def log_data(self, hub: StationTelemetry) -> None:
+        today_date = datetime.now().strftime('%Y-%m-%d')
 
-        archivo_csv = os.path.join(
-            self.directorio,
-            f"historial_davis_{fecha_hoy}.csv"
+        csv_file = os.path.join(
+            self.directory,
+            f"davis_history_{today_date}.csv"
         )
 
-        existe = os.path.isfile(archivo_csv)
+        exists = os.path.isfile(csv_file)
 
-        fila = [
+        row = [
             datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
             hub.temp,
-            hub.humedad,
-            hub.viento_vel,
-            hub.viento_dir,
-            hub.viento_cardinal,
-            hub.rafaga,
-            hub.tasa_lluvia,
-            hub.humedad_hoja,
+            hub.humidity,
+            hub.wind_speed,
+            hub.wind_dir,
+            hub.wind_cardinal,
+            hub.gust,
+            hub.rain_rate,
+            hub.leaf_moisture,
             hub.uv,
             hub.solar,
-            hub.bateria
+            hub.battery
         ]
 
         try:
             with open(
-                archivo_csv,
+                csv_file,
                 mode='a',
                 newline='',
                 encoding='utf-8'
             ) as f:
 
-                escritor = csv.writer(f)
+                writer = csv.writer(f)
 
-                if not existe:
-                    escritor.writerow([
-                        "Fecha_Hora",
+                if not exists:
+                    writer.writerow([
+                        "Date_Time",
                         "Temp_C",
-                        "Humedad_%",
-                        "Viento_kmh",
-                        "Direccion_Grados",
+                        "Humidity_%",
+                        "Wind_kmh",
+                        "Direction_Degrees",
                         "Cardinal",
-                        "Rafaga_kmh",
-                        "Lluvia_mm_h",
-                        "Hoja_0_15",
-                        "Indice_UV",
-                        "Radiacion_W_m2",
-                        "Bateria_TX"
+                        "Gust_kmh",
+                        "Rain_mm_h",
+                        "Leaf_0_15",
+                        "UV_Index",
+                        "Radiation_W_m2",
+                        "TX_Battery"
                     ])
 
-                escritor.writerow(fila)
+                writer.writerow(row)
 
         except IOError as e:
-            logger.exception(f"Error escribiendo CSV: {e}")
+            logger.exception(f"Error writing CSV: {e}")
 
-class DecodificadorDavis:
+class DavisDecoder:
     @staticmethod
-    def validar_crc(hex_str: str) -> bool:
+    def validate_crc(hex_str: str) -> bool:
         try:
             data = bytes.fromhex(hex_str)
             if len(data) < 8: return False
@@ -230,49 +228,49 @@ class DecodificadorDavis:
                     crc &= 0xFFFF
             return crc == (data[6] << 8 | data[7])
         except Exception as e:
-            logger.exception(f"Error validando CRC: {e}")
+            logger.exception(f"Error validating CRC: {e}")
             return False
 
     @staticmethod
-    def grados_a_cardinal(grados: float) -> str:
-        direcciones = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", 
-                       "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
-        return direcciones[round(grados / 22.5) % 16]
+    def degrees_to_cardinal(degrees: float) -> str:
+        directions = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE",
+                      "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"]
+        return directions[round(degrees / 22.5) % 16]
 
-class NucleoMonitoreo:
-    def __init__(self, db_manager: GestorAlmacenamiento):
-        self.hub = TelemetriaEstacion.inicializar_vacio()
-        self.sdr = EstadoSDR()
+class MonitoringCore:
+    def __init__(self, db_manager: StorageManager):
+        self.hub = StationTelemetry.init_empty()
+        self.sdr = SDRState()
         self.db = db_manager
-        self.lock = threading.Lock()  # Protege TODA mutación entre hilos
+        self.lock = threading.Lock()  # Protects ALL mutation between threads
         self.shutdown_event = threading.Event()
-        self.proc_rtldavis: Optional[subprocess.Popen] = None
-        self.hora_inicio = time.time()
-        
-        self.tendencia_temp = AnalizadorTendencias()
-        self.tendencia_viento = AnalizadorTendencias()
-        self.arrow_temp = "─"
-        self.arrow_viento = "─"
-        
-        # === HISTÓRICOS EN RAM ===
-        self.hist_temp = deque(maxlen=120)
-        self.hist_humedad = deque(maxlen=120)
-        self.hist_viento = deque(maxlen=120)
-        self.hist_uv = deque(maxlen=120)
+        self.rtldavis_proc: Optional[subprocess.Popen] = None
+        self.start_time = time.time()
 
-    def procesar_trama(self, hex_str: str) -> bool:
+        self.temp_trend = TrendAnalyzer()
+        self.wind_trend = TrendAnalyzer()
+        self.arrow_temp = "─"
+        self.wind_arrow = "─"
+
+        # === IN-RAM HISTORY BUFFERS ===
+        self.temp_history = deque(maxlen=120)
+        self.humidity_history = deque(maxlen=120)
+        self.wind_history = deque(maxlen=120)
+        self.uv_history = deque(maxlen=120)
+
+    def process_frame(self, hex_str: str) -> bool:
 
         with self.lock:
 
-            # Validación básica y CRC
-            if len(hex_str) < 16 or not DecodificadorDavis.validar_crc(hex_str):
+            # Basic validation and CRC
+            if len(hex_str) < 16 or not DavisDecoder.validate_crc(hex_str):
 
-                self.sdr.paquetes_descartados_crc += 1
+                self.sdr.crc_rejected_packets += 1
 
-                if self.sdr.paquetes_descartados_crc % 100 == 0:
+                if self.sdr.crc_rejected_packets % 100 == 0:
                     logger.warning(
-                        f"CRC inválidos acumulados: "
-                        f"{self.sdr.paquetes_descartados_crc}"
+                        f"Accumulated invalid CRCs: "
+                        f"{self.sdr.crc_rejected_packets}"
                     )
 
                 return False
@@ -286,49 +284,49 @@ class NucleoMonitoreo:
 
                 b0, b1, b2, b3, b4 = struct.unpack(">BBBBB", data)
 
-                tx_id_detectado = str((b0 >> 1) & 0x07)
+                detected_tx_id = str((b0 >> 1) & 0x07)
 
-                if tx_id_detectado != TX_ID_OBJETIVO:
-                    self.sdr.paquetes_descartados_id += 1
+                if detected_tx_id != TARGET_TX_ID:
+                    self.sdr.id_rejected_packets += 1
                     return False
 
                 updates: Dict[str, str] = {
-                    "tx_id": tx_id_detectado,
-                    "bateria": "Baja" if (b0 & 0x01) else "OK",
-                    "viento_vel": f"{(b1 * 1.60934):.1f}"
+                    "tx_id": detected_tx_id,
+                    "battery": "Low" if (b0 & 0x01) else "OK",
+                    "wind_speed": f"{(b1 * 1.60934):.1f}"
                 }
 
-                # Historial viento
-                if updates["viento_vel"] != "--":
-                    self.hist_viento.append(
-                        float(updates["viento_vel"])
+                # Wind history
+                if updates["wind_speed"] != "--":
+                    self.wind_history.append(
+                        float(updates["wind_speed"])
                     )
 
-                self.arrow_viento = (
-                    self.tendencia_viento
-                    .registrar_y_obtener_flecha(
-                        updates["viento_vel"]
-                    )
-                )
-
-                # Dirección viento
-                direccion_grados = (b2 * 360) / 255.0
-
-                updates["viento_dir"] = f"{direccion_grados:.0f}"
-
-                updates["viento_cardinal"] = (
-                    DecodificadorDavis.grados_a_cardinal(
-                        direccion_grados
+                self.wind_arrow = (
+                    self.wind_trend
+                    .record_and_get_arrow(
+                        updates["wind_speed"]
                     )
                 )
 
-                # Tipo paquete
+                # Wind direction
+                direction_degrees = (b2 * 360) / 255.0
+
+                updates["wind_dir"] = f"{direction_degrees:.0f}"
+
+                updates["wind_cardinal"] = (
+                    DavisDecoder.degrees_to_cardinal(
+                        direction_degrees
+                    )
+                )
+
+                # Packet type
                 try:
 
-                    tipo = TipoPaquete(b0 >> 4)
+                    packet_type = PacketType(b0 >> 4)
 
-                    # TEMPERATURA
-                    if tipo == TipoPaquete.TEMPERATURE:
+                    # TEMPERATURE
+                    if packet_type == PacketType.TEMPERATURE:
                         raw_temp = (b3 << 8) | b4
                         if raw_temp >= 32768:
                             raw_temp -= 65536
@@ -337,46 +335,46 @@ class NucleoMonitoreo:
                         celsius_str = f"{celsius:.1f}"
 
                         updates["temp"] = celsius_str
-                        self.hist_temp.append(celsius)
+                        self.temp_history.append(celsius)
 
                         self.arrow_temp = (
-                            self.tendencia_temp
-                            .registrar_y_obtener_flecha(celsius_str)
+                            self.temp_trend
+                            .record_and_get_arrow(celsius_str)
                         )
 
-                    # HUMEDAD
-                    elif tipo == TipoPaquete.HUMIDITY:
-                        texto_concatenado= hex_str[8] + hex_str[6:8]
-                        hum=int(texto_concatenado, 16) /10.0
-                        hum=min(hum, 100.0)
-                        updates["humedad"] = f"{hum:.1f}"
-                        self.hist_humedad.append(hum)
+                    # HUMIDITY
+                    elif packet_type == PacketType.HUMIDITY:
+                        concatenated_text = hex_str[8] + hex_str[6:8]
+                        hum = int(concatenated_text, 16) / 10.0
+                        hum = min(hum, 100.0)
+                        updates["humidity"] = f"{hum:.1f}"
+                        self.humidity_history.append(hum)
 
-                    # LLUVIA
-                    elif tipo == TipoPaquete.RAIN_RATE:
+                    # RAIN
+                    elif packet_type == PacketType.RAIN_RATE:
                         if hex_str[6:8].upper() == "FF":
-                            updates["estado_lluvia"] = "⚪ Seco"
-                            updates["tasa_lluvia"] = "0.0"
+                            updates["rain_state"] = "⚪ Dry"
+                            updates["rain_rate"] = "0.0"
                         else:
                             rain = (int(hex_str[8] + hex_str[6:8], 16) * 0.2)
-                            updates["estado_lluvia"] = "🔴 Lloviendo"
-                            updates["tasa_lluvia"] = f"{rain:.1f}"
+                            updates["rain_state"] = "🔴 Raining"
+                            updates["rain_rate"] = f"{rain:.1f}"
 
-                    # HUMEDAD HOJA
-                    elif tipo == TipoPaquete.LEAF_MOISTURE:
+                    # LEAF MOISTURE
+                    elif packet_type == PacketType.LEAF_MOISTURE:
                         leaf_raw = int(hex_str[8] + hex_str[6:8], 16)
                         if leaf_raw > 15:
-                            valor = min(round(leaf_raw / 10.0), 15)
+                            value = min(round(leaf_raw / 10.0), 15)
                         else:
-                            valor = leaf_raw
-                        updates["humedad_hoja"] = str(valor)
+                            value = leaf_raw
+                        updates["leaf_moisture"] = str(value)
 
-                    # RAFAGA
-                    elif tipo == TipoPaquete.VIENTO_RAFAGA:
-                        updates["rafaga"] = f"{(b3 * 1.60934):.1f}"
+                    # GUST
+                    elif packet_type == PacketType.WIND_GUST:
+                        updates["gust"] = f"{(b3 * 1.60934):.1f}"
 
                     # SOLAR
-                    elif tipo == TipoPaquete.SOLAR_RAD:
+                    elif packet_type == PacketType.SOLAR_RAD:
                         sr_raw = (((b3 << 2) | (b4 >> 6)) & 0x3FF)
                         if sr_raw < 0x3FF:
                             updates["solar"] = f"{(sr_raw * 1.757936):.1f}"
@@ -384,13 +382,13 @@ class NucleoMonitoreo:
                             updates["solar"] = "N/A"
 
                     # UV
-                    elif tipo == TipoPaquete.UV_INDEX:
+                    elif packet_type == PacketType.UV_INDEX:
                         uv_raw = (((b3 << 2) | (b4 >> 6)) & 0x3FF)
                         if uv_raw < 0x3FF:
                             uv = uv_raw / 50.0
                             updates["uv"] = f"{uv:.1f}"
-                            self.hist_uv.append(uv)
-                            
+                            self.uv_history.append(uv)
+
                             meds = uv * (3.0 / 7.0)
                             updates["meds"] = f"{meds:.2f}"
                         else:
@@ -400,32 +398,32 @@ class NucleoMonitoreo:
                 except ValueError:
                     pass
 
-                # Aplicar updates atómicamente
+                # Apply updates atomically
                 for k, v in updates.items():
                     setattr(self.hub, k, v)
 
                 return True
 
             except Exception as e:
-                logger.exception(f"Error procesando trama [{hex_str}]: {e}")
+                logger.exception(f"Error processing frame [{hex_str}]: {e}")
                 return False
-                
-    def lector_rtldavis_worker(self) -> None:
-        # BORRA el '-g', '40' para que quede exactamente así:
+
+    def rtldavis_reader_worker(self) -> None:
+        # DELETE the '-g', '40' so it reads exactly like this:
         cmd = ['rtldavis', '-tf', 'US']
 
-        regex_hop = re.compile(r'ChannelIdx:(\d+) ChannelFreq:(\d+)')
-        regex_time = re.compile(r'^\d{2}:\d{2}:\d{2}\.\d+')
+        hop_regex = re.compile(r'ChannelIdx:(\d+) ChannelFreq:(\d+)')
+        time_regex = re.compile(r'^\d{2}:\d{2}:\d{2}\.\d+')
 
-        logger.info("Iniciando hilo SDR rtldavis")
+        logger.info("Starting rtldavis SDR thread")
         timeout_counter = 0
 
         while not self.shutdown_event.is_set():
             try:
                 with self.lock:
-                    self.sdr.ultima_actividad_rf = time.time()
+                    self.sdr.last_rf_activity = time.time()
 
-                self.proc_rtldavis = subprocess.Popen(
+                self.rtldavis_proc = subprocess.Popen(
                     cmd,
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
@@ -433,128 +431,128 @@ class NucleoMonitoreo:
                     bufsize=1
                 )
 
-                logger.info("Proceso rtldavis iniciado")
+                logger.info("rtldavis process started")
 
                 while not self.shutdown_event.is_set():
 
-                    if self.proc_rtldavis is None or self.proc_rtldavis.stdout is None:
-                        logger.warning("rtldavis no tiene stdout disponible")
+                    if self.rtldavis_proc is None or self.rtldavis_proc.stdout is None:
+                        logger.warning("rtldavis has no stdout available")
                         break
 
-                    # Espera máxima 1 segundo
-                    ready, _, _ = select.select([self.proc_rtldavis.stdout], [], [], 1.0)
+                    # Wait a maximum of 1 second
+                    ready, _, _ = select.select([self.rtldavis_proc.stdout], [], [], 1.0)
 
                     if not ready:
                         timeout_counter += 1
                         if timeout_counter >= 30:
-                            logger.warning(f"Sin actividad RF durante {timeout_counter} segundos")
+                            logger.warning(f"No RF activity for {timeout_counter} seconds")
                         continue
 
-                    stdout = self.proc_rtldavis.stdout
-                    linea = stdout.readline()
+                    stdout = self.rtldavis_proc.stdout
+                    line = stdout.readline()
 
-                    if not linea:
-                        logger.warning("rtldavis terminó o cerró stdout")
+                    if not line:
+                        logger.warning("rtldavis exited or closed stdout")
                         break
 
-                    linea = linea.strip()
-                    if not linea:
+                    line = line.strip()
+                    if not line:
                         continue
 
                     timeout_counter = 0
 
                     with self.lock:
-                        self.sdr.ultima_actividad_rf = time.time()
+                        self.sdr.last_rf_activity = time.time()
 
-                    if "Hop:" in linea:
-                        match = regex_hop.search(linea)
+                    if "Hop:" in line:
+                        match = hop_regex.search(line)
                         if match:
                             with self.lock:
-                                self.sdr.canal = match.group(1)
+                                self.sdr.channel = match.group(1)
                                 self.sdr.freq = f"{int(match.group(2)) / 1000000.0:.3f}"
 
-                    elif (regex_time.match(linea) and "Hop:" not in linea and "ppm" not in linea):
-                        partes = linea.split(maxsplit=1)
-                        if len(partes) > 1:
-                            trama_limpia = partes[1].split()[0]
+                    elif (time_regex.match(line) and "Hop:" not in line and "ppm" not in line):
+                        parts = line.split(maxsplit=1)
+                        if len(parts) > 1:
+                            clean_frame = parts[1].split()[0]
 
                             with self.lock:
-                                self.sdr.ultima_trama = partes[1]
+                                self.sdr.last_frame = parts[1]
 
-                            if self.procesar_trama(trama_limpia):
+                            if self.process_frame(clean_frame):
                                 with self.lock:
-                                    self.sdr.paquetes += 1
+                                    self.sdr.packets += 1
 
             except Exception as e:
-                logger.exception(f"Error en lector_rtldavis_worker: {e}")
+                logger.exception(f"Error in rtldavis_reader_worker: {e}")
 
             finally:
-                if self.proc_rtldavis is not None:
+                if self.rtldavis_proc is not None:
                     try:
-                        self.proc_rtldavis.terminate()
+                        self.rtldavis_proc.terminate()
                     except (OSError, subprocess.SubprocessError):
                         pass
-                    self.proc_rtldavis = None
+                    self.rtldavis_proc = None
 
             time.sleep(1)
 
-    def obtener_instantanea(self) -> tuple:
-        """Devuelve copias seguras desconectadas de los hilos para evitar Race Conditions."""
+    def get_snapshot(self) -> tuple:
+        """Returns thread-disconnected safe copies to avoid Race Conditions."""
         with self.lock:
             return (
-                self.hub.clonar(),
-                self.sdr.clonar(),
+                self.hub.clone(),
+                self.sdr.clone(),
                 self.arrow_temp,
-                self.arrow_viento,
-                list(self.hist_temp),
-                list(self.hist_viento)
+                self.wind_arrow,
+                list(self.temp_history),
+                list(self.wind_history)
             )
 
-    def forzar_reinicio_sdr(self, ahora: float) -> None:
+    def force_sdr_restart(self, now: float) -> None:
         with self.lock:
-            self.sdr.reinicios_rtldavis += 1
-            logger.warning("Watchdog SDR activado: reiniciando rtldavis")
-            self.sdr.ultimo_reinicio = datetime.now().strftime('%H:%M:%S')
-            self.sdr.freq = "Reiniciando..."
-            self.sdr.canal = "-"
+            self.sdr.rtldavis_restarts += 1
+            logger.warning("SDR watchdog triggered: restarting rtldavis")
+            self.sdr.last_restart = datetime.now().strftime('%H:%M:%S')
+            self.sdr.freq = "Restarting..."
+            self.sdr.channel = "-"
 
-        if self.proc_rtldavis:
+        if self.rtldavis_proc:
             try:
-                self.proc_rtldavis.terminate()
+                self.rtldavis_proc.terminate()
             except Exception as e:
-                logger.exception(f"Error terminando proceso rtldavis: {e}")
+                logger.exception(f"Error terminating rtldavis process: {e}")
 
         with self.lock:
-            self.sdr.ultima_actividad_rf = ahora
+            self.sdr.last_rf_activity = now
 
-    def actualizar_estado_csv(self, texto: str, tiempo_guardado: Optional[float] = None) -> None:
+    def update_csv_status(self, text: str, saved_time: Optional[float] = None) -> None:
         with self.lock:
-            self.sdr.estado_csv = texto
-            if tiempo_guardado is not None:
-                self.sdr.ultimo_guardado_csv = tiempo_guardado
+            self.sdr.csv_status = text
+            if saved_time is not None:
+                self.sdr.last_csv_write = saved_time
 
-    def verificar_datos_completos(self) -> bool:
-        if time.time() - self.hora_inicio > TIEMPO_MAX_ESPERA_SENSORES: return True
+    def check_data_complete(self) -> bool:
+        if time.time() - self.start_time > MAX_SENSOR_WAIT_TIME: return True
         with self.lock:
             return all(getattr(self.hub, attr) != "--" for attr in self.hub.__slots__)
 
-    def finalizar(self) -> None:
+    def shutdown(self) -> None:
         self.shutdown_event.set()
-        if self.proc_rtldavis:
+        if self.rtldavis_proc:
             try:
-                self.proc_rtldavis.terminate()
-                self.proc_rtldavis.wait(timeout=1)
+                self.rtldavis_proc.terminate()
+                self.rtldavis_proc.wait(timeout=1)
             except Exception as e:
-                logger.exception(f"Error cerrando rtldavis limpiamente: {e}")
+                logger.exception(f"Error closing rtldavis cleanly: {e}")
                 try:
-                    self.proc_rtldavis.kill()
+                    self.rtldavis_proc.kill()
                 except Exception as kill_error:
-                    logger.exception(f"Error forzando kill de rtldavis: {kill_error}")
+                    logger.exception(f"Error forcing rtldavis kill: {kill_error}")
 
 
-class MotorInterfazTUI:
-    def __init__(self, nucleo: NucleoMonitoreo):
-        self.core = nucleo
+class TUIInterfaceEngine:
+    def __init__(self, core: MonitoringCore):
+        self.core = core
 
     @staticmethod
     def safe_addstr(stdscr, y: int, x: int, text: str, attr: int = 0) -> None:
@@ -564,72 +562,72 @@ class MotorInterfazTUI:
             pass
 
     @staticmethod
-    def seguro_float(val_str: str) -> float:
+    def safe_float(val_str: str) -> float:
         try:
             return float(val_str)
         except ValueError:
             return 0.0
 
     @staticmethod
-    def generar_sparkline(datos, ancho=20):
-        if not datos:
-            return "─" * ancho
+    def generate_sparkline(data, width=20):
+        if not data:
+            return "─" * width
 
-        bloques = "▁▂▃▄▅▆▇█"
-        datos = list(datos)[-ancho:]
-        minimo = min(datos)
-        maximo = max(datos)
+        blocks = "▁▂▃▄▅▆▇█"
+        data = list(data)[-width:]
+        minimum = min(data)
+        maximum = max(data)
 
-        if maximo == minimo:
-            return bloques[0] * len(datos)
+        if maximum == minimum:
+            return blocks[0] * len(data)
 
-        resultado = ""
-        for valor in datos:
-            indice = int((valor - minimo) / (maximo - minimo) * (len(bloques) - 1))
-            resultado += bloques[indice]
+        result = ""
+        for value in data:
+            index = int((value - minimum) / (maximum - minimum) * (len(blocks) - 1))
+            result += blocks[index]
 
-        return resultado
+        return result
 
-    def dibujar_contenedor(self, stdscr, y: int, x: int, alto: int, ancho: int, titulo: str) -> None:
-        c_borde = curses.color_pair(1)
-        c_titulo = curses.color_pair(5) | curses.A_BOLD
+    def draw_container(self, stdscr, y: int, x: int, height: int, width: int, title: str) -> None:
+        c_border = curses.color_pair(1)
+        c_title = curses.color_pair(5) | curses.A_BOLD
 
-        self.safe_addstr(stdscr, y, x, "╭" + "─" * (ancho - 2) + "╮", c_borde)
-        for i in range(1, alto - 1):
-            self.safe_addstr(stdscr, y + i, x, "│", c_borde)
-            self.safe_addstr(stdscr, y + i, x + ancho - 1, "│", c_borde)
+        self.safe_addstr(stdscr, y, x, "╭" + "─" * (width - 2) + "╮", c_border)
+        for i in range(1, height - 1):
+            self.safe_addstr(stdscr, y + i, x, "│", c_border)
+            self.safe_addstr(stdscr, y + i, x + width - 1, "│", c_border)
 
-        self.safe_addstr(stdscr, y + alto - 1, x, "╰" + "─" * (ancho - 2) + "╯", c_borde)
-        self.safe_addstr(stdscr, y, x + 3, f" {titulo} ", c_titulo)
+        self.safe_addstr(stdscr, y + height - 1, x, "╰" + "─" * (width - 2) + "╯", c_border)
+        self.safe_addstr(stdscr, y, x + 3, f" {title} ", c_title)
 
-    def dibujar_brujula(self, stdscr, y: int, x: int, cardinal: str) -> None:
+    def draw_compass(self, stdscr, y: int, x: int, cardinal: str) -> None:
         c_base = curses.color_pair(7) | curses.A_BOLD
-        c_act = curses.color_pair(4) | curses.A_BOLD
-        c_txt = curses.color_pair(6)
+        c_active = curses.color_pair(4) | curses.A_BOLD
+        c_text = curses.color_pair(6)
 
         self.safe_addstr(stdscr, y + 1, x + 6, "│", c_base)
         self.safe_addstr(stdscr, y + 2, x + 2, "────┼────", c_base)
         self.safe_addstr(stdscr, y + 3, x + 6, "│", c_base)
 
-        puntos = {
+        points = {
             "N": (0, 5, "[N]"), "NE": (1, 9, "NE"), "E": (2, 12, "[E]"),
             "SE": (3, 9, "SE"), "S": (4, 5, "[S]"), "SW": (3, 1, "SW"),
             "W": (2, -1, "[W]"), "NW": (1, 1, "NW")
         }
 
-        mapa_8 = {
+        map_8 = {
             "N": "N", "NNE": "N", "NE": "NE", "ENE": "NE", "E": "E", "ESE": "E",
             "SE": "SE", "SSE": "SE", "S": "S", "SSW": "S", "SW": "SW", "WSW": "SW",
             "W": "W", "WNW": "W", "NW": "NW", "NNW": "NW"
         }
 
-        target = mapa_8.get(cardinal, "-")
+        target = map_8.get(cardinal, "-")
 
-        for k, (dy, dx, txt) in puntos.items():
-            self.safe_addstr(stdscr, y + dy, x + dx, txt, c_act if k == target else c_txt)
+        for k, (dy, dx, txt) in points.items():
+            self.safe_addstr(stdscr, y + dy, x + dx, txt, c_active if k == target else c_text)
 
     @staticmethod
-    def obtener_color_temperatura(temp_str: str) -> int:
+    def get_temperature_color(temp_str: str) -> int:
         try:
             val = float(temp_str)
             if val <= 10.0:
@@ -640,7 +638,7 @@ class MotorInterfazTUI:
         except ValueError:
             return curses.color_pair(6)
 
-    def ejecutar(self, stdscr) -> None:
+    def run(self, stdscr) -> None:
         curses.curs_set(0)
         stdscr.nodelay(1)
 
@@ -656,34 +654,34 @@ class MotorInterfazTUI:
         curses.init_pair(7, curses.COLOR_BLUE, -1)
 
         threading.Thread(
-            target=self.core.lector_rtldavis_worker,
+            target=self.core.rtldavis_reader_worker,
             daemon=True
         ).start()
 
         while True:
-            ahora = time.time()
+            now = time.time()
 
             (
                 h,
                 s,
                 arrow_temp,
-                arrow_viento,
+                wind_arrow,
                 hist_temp,
-                hist_viento
-            ) = self.core.obtener_instantanea()
+                hist_wind
+            ) = self.core.get_snapshot()
 
-            spark_temp = self.generar_sparkline(hist_temp, 18)
-            spark_viento = self.generar_sparkline(hist_viento, 18)
+            spark_temp = self.generate_sparkline(hist_temp, 18)
+            spark_wind = self.generate_sparkline(hist_wind, 18)
 
-            if ahora - s.ultima_actividad_rf > 30.0:
-                self.core.forzar_reinicio_sdr(ahora)
+            if now - s.last_rf_activity > 30.0:
+                self.core.force_sdr_restart(now)
 
-            if self.core.verificar_datos_completos():
-                if ahora - s.ultimo_guardado_csv >= 60.0:
-                    self.core.db.registrar_datos(h)
-                    self.core.actualizar_estado_csv("Local Base: OK", tiempo_guardado=ahora)
+            if self.core.check_data_complete():
+                if now - s.last_csv_write >= 60.0:
+                    self.core.db.log_data(h)
+                    self.core.update_csv_status("Local DB: OK", saved_time=now)
             else:
-                self.core.actualizar_estado_csv("Sincronizando...")
+                self.core.update_csv_status("Syncing...")
 
             c = stdscr.getch()
             if c in [ord('q'), ord('Q')]:
@@ -691,105 +689,105 @@ class MotorInterfazTUI:
 
             stdscr.erase()
 
-            alto_p, ancho_p = stdscr.getmaxyx()
+            screen_h, screen_w = stdscr.getmaxyx()
 
-            if alto_p < 24 or ancho_p < 94:
-                self.safe_addstr(stdscr, 1, 1, "⚠️ Pantalla pequeña. Agrande la terminal.", curses.color_pair(3))
+            if screen_h < 24 or screen_w < 94:
+                self.safe_addstr(stdscr, 1, 1, "⚠️ Screen too small. Enlarge the terminal.", curses.color_pair(3))
                 stdscr.refresh()
                 time.sleep(0.2)
                 continue
 
-            w_panel = (ancho_p - 4) // 2
-            x_right = w_panel + 3
-            panel_w_bottom = (w_panel * 2) + 2
+            panel_w = (screen_w - 4) // 2
+            x_right = panel_w + 3
+            panel_w_bottom = (panel_w * 2) + 2
 
-            str_tiempo = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-            uptime_seg = int(ahora - self.core.hora_inicio)
-            str_uptime = f"UPTIME: {uptime_seg // 3600:02d}:{(uptime_seg % 3600) // 60:02d}:{uptime_seg % 60:02d}"
+            time_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            uptime_sec = int(now - self.core.start_time)
+            uptime_str = f"UPTIME: {uptime_sec // 3600:02d}:{(uptime_sec % 3600) // 60:02d}:{uptime_sec % 60:02d}"
 
-            titulo = f" 📡 ESTACIÓN DAVIS VP2 │ {str_tiempo} │ {str_uptime} "
+            title = f" 📡 DAVIS VP2 STATION │ {time_str} │ {uptime_str} "
 
-            self.safe_addstr(stdscr, 0, (ancho_p - len(titulo)) // 2, titulo, curses.color_pair(4) | curses.A_BOLD | curses.A_REVERSE)
+            self.safe_addstr(stdscr, 0, (screen_w - len(title)) // 2, title, curses.color_pair(4) | curses.A_BOLD | curses.A_REVERSE)
 
-            # PANEL VIENTO
-            self.dibujar_contenedor(stdscr, 2, 1, 9, w_panel, "MONITOREO DE VIENTO")
-            self.safe_addstr(stdscr, 4, 3, "Velocidad :", curses.color_pair(6))
-            self.safe_addstr(stdscr, 4, 15, f"{h.viento_vel:>5} km/h {arrow_viento}", curses.color_pair(2) | curses.A_BOLD)
-            self.safe_addstr(stdscr, 5, 3, "Dirección :", curses.color_pair(6))
-            self.safe_addstr(stdscr, 5, 15, f"{h.viento_dir:>5} °", curses.color_pair(6) | curses.A_BOLD)
-            self.safe_addstr(stdscr, 6, 3, "Ráfaga Max:", curses.color_pair(6))
-            self.safe_addstr(stdscr, 6, 15, f"{h.rafaga:>5} km/h", curses.color_pair(3) | curses.A_BOLD)
-            self.safe_addstr(stdscr, 7, 3, f"Tendencia   : {spark_viento}", curses.color_pair(4))
-            self.dibujar_brujula(stdscr, 3, w_panel - 18, h.viento_cardinal)
+            # WIND PANEL
+            self.draw_container(stdscr, 2, 1, 9, panel_w, "WIND MONITORING")
+            self.safe_addstr(stdscr, 4, 3, "Speed     :", curses.color_pair(6))
+            self.safe_addstr(stdscr, 4, 15, f"{h.wind_speed:>5} km/h {wind_arrow}", curses.color_pair(2) | curses.A_BOLD)
+            self.safe_addstr(stdscr, 5, 3, "Direction :", curses.color_pair(6))
+            self.safe_addstr(stdscr, 5, 15, f"{h.wind_dir:>5} °", curses.color_pair(6) | curses.A_BOLD)
+            self.safe_addstr(stdscr, 6, 3, "Max Gust  :", curses.color_pair(6))
+            self.safe_addstr(stdscr, 6, 15, f"{h.gust:>5} km/h", curses.color_pair(3) | curses.A_BOLD)
+            self.safe_addstr(stdscr, 7, 3, f"Trend     : {spark_wind}", curses.color_pair(4))
+            self.draw_compass(stdscr, 3, panel_w - 18, h.wind_cardinal)
 
-            # PANEL TEMPERATURA
-            self.dibujar_contenedor(stdscr, 2, x_right, 9, w_panel, "TERMODINÁMICA")
-            self.safe_addstr(stdscr, 4, x_right + 3, "Temperatura :", curses.color_pair(6))
-            self.safe_addstr(stdscr, 4, x_right + 17, f"{h.temp:>5} °C {arrow_temp}", self.obtener_color_temperatura(h.temp))
-            self.safe_addstr(stdscr, 5, x_right + 3, "Humedad     :", curses.color_pair(6))
-            self.safe_addstr(stdscr, 5, x_right + 17, f"{h.humedad:>5} %", curses.color_pair(1) | curses.A_BOLD)
-            self.safe_addstr(stdscr, 6, x_right + 3, f"Tendencia   : {spark_temp}", curses.color_pair(4))
+            # TEMPERATURE PANEL
+            self.draw_container(stdscr, 2, x_right, 9, panel_w, "THERMODYNAMICS")
+            self.safe_addstr(stdscr, 4, x_right + 3, "Temperature :", curses.color_pair(6))
+            self.safe_addstr(stdscr, 4, x_right + 17, f"{h.temp:>5} °C {arrow_temp}", self.get_temperature_color(h.temp))
+            self.safe_addstr(stdscr, 5, x_right + 3, "Humidity    :", curses.color_pair(6))
+            self.safe_addstr(stdscr, 5, x_right + 17, f"{h.humidity:>5} %", curses.color_pair(1) | curses.A_BOLD)
+            self.safe_addstr(stdscr, 6, x_right + 3, f"Trend       : {spark_temp}", curses.color_pair(4))
 
-            # Alertas numéricas seguras
-            f_temp = self.seguro_float(h.temp)
-            f_rain = self.seguro_float(h.tasa_lluvia)
+            # Safe numeric alerts
+            f_temp = self.safe_float(h.temp)
+            f_rain = self.safe_float(h.rain_rate)
             if h.temp != "--" and f_temp <= 2.0:
-                self.safe_addstr(stdscr, 7, x_right + 3, "⚠️ ADVERTENCIA: HELADA", curses.color_pair(3) | curses.A_BOLD)
-            elif h.tasa_lluvia != "--" and f_rain >= 25.0:
-                self.safe_addstr(stdscr, 7, x_right + 3, "⚠️ CRÍTICO: TORMENTA SEVERA", curses.color_pair(3) | curses.A_BOLD)
+                self.safe_addstr(stdscr, 7, x_right + 3, "⚠️ WARNING: FROST", curses.color_pair(3) | curses.A_BOLD)
+            elif h.rain_rate != "--" and f_rain >= 25.0:
+                self.safe_addstr(stdscr, 7, x_right + 3, "⚠️ CRITICAL: SEVERE STORM", curses.color_pair(3) | curses.A_BOLD)
 
-            # PANEL PLUVIOMETRÍA
-            self.dibujar_contenedor(stdscr, 11, 1, 6, w_panel, "PLUVIOMETRÍA")
-            self.safe_addstr(stdscr, 13, 3, "Tasa Lluvia :", curses.color_pair(6))
-            self.safe_addstr(stdscr, 13, 17, f"{h.tasa_lluvia:>5} mm/h", curses.color_pair(1) | curses.A_BOLD)
-            self.safe_addstr(stdscr, 14, 3, "Estado      :", curses.color_pair(6))
-            c_ll = curses.color_pair(3) | curses.A_BOLD if "Lloviendo" in h.estado_lluvia else curses.color_pair(2) | curses.A_BOLD
-            self.safe_addstr(stdscr, 14, 17, f" {h.estado_lluvia}", c_ll)
-            self.safe_addstr(stdscr, 15, 3, "Humedad Hoja:", curses.color_pair(6))
-            self.safe_addstr(stdscr, 15, 17, f"   {h.humedad_hoja:>2} / 15", curses.color_pair(2))
+            # RAIN GAUGE PANEL
+            self.draw_container(stdscr, 11, 1, 6, panel_w, "RAIN GAUGE")
+            self.safe_addstr(stdscr, 13, 3, "Rain Rate   :", curses.color_pair(6))
+            self.safe_addstr(stdscr, 13, 17, f"{h.rain_rate:>5} mm/h", curses.color_pair(1) | curses.A_BOLD)
+            self.safe_addstr(stdscr, 14, 3, "State       :", curses.color_pair(6))
+            c_rain = curses.color_pair(3) | curses.A_BOLD if "Raining" in h.rain_state else curses.color_pair(2) | curses.A_BOLD
+            self.safe_addstr(stdscr, 14, 17, f" {h.rain_state}", c_rain)
+            self.safe_addstr(stdscr, 15, 3, "Leaf Wetness:", curses.color_pair(6))
+            self.safe_addstr(stdscr, 15, 17, f"   {h.leaf_moisture:>2} / 15", curses.color_pair(2))
 
-            # PANEL RADIACIÓN
-            self.dibujar_contenedor(stdscr, 11, x_right, 6, w_panel, "HILOS DE RADIACIÓN")
-            self.safe_addstr(stdscr, 13, x_right + 3, "Índice UV :", curses.color_pair(6))
+            # RADIATION PANEL
+            self.draw_container(stdscr, 11, x_right, 6, panel_w, "RADIATION THREADS")
+            self.safe_addstr(stdscr, 13, x_right + 3, "UV Index  :", curses.color_pair(6))
             self.safe_addstr(stdscr, 13, x_right + 15, f"{h.uv:>6} UVI", curses.color_pair(5) | curses.A_BOLD)
-            self.safe_addstr(stdscr, 14, x_right + 3, "Radiación :", curses.color_pair(6))
+            self.safe_addstr(stdscr, 14, x_right + 3, "Radiation :", curses.color_pair(6))
             self.safe_addstr(stdscr, 14, x_right + 15, f"{h.solar:>6} W/m²", curses.color_pair(4) | curses.A_BOLD)
-            self.safe_addstr(stdscr, 15, x_right + 3, "Dosis UV  :", curses.color_pair(6))
+            self.safe_addstr(stdscr, 15, x_right + 3, "UV Dose   :", curses.color_pair(6))
             self.safe_addstr(stdscr, 15, x_right + 15, f"{h.meds:>6} MEDs", curses.color_pair(5))
 
-            # DIAGNÓSTICOS
-            self.dibujar_contenedor(stdscr, 17, 1, 8, panel_w_bottom, "DIAGNÓSTICO DE SISTEMA RF (SDR)")
-            info_rf = f"📡 FREC: {s.freq} MHz │ CANAL: {s.canal}/51 │ BATERÍA TX: {h.bateria}"
-            self.safe_addstr(stdscr, 19, 3, info_rf, curses.color_pair(1) | curses.A_BOLD)
-            self.safe_addstr(stdscr, 19, panel_w_bottom - 26, f" {s.estado_csv} ", curses.color_pair(2) | curses.A_REVERSE)
-            
-            telemetria = f"Tramas Válidas: {s.paquetes} │ Fallas de CRC: {s.paquetes_descartados_crc} │ Descartes Transmisor: {s.paquetes_descartados_id}"
-            self.safe_addstr(stdscr, 20, 3, telemetria, curses.color_pair(6))
-            
-            watchdog_txt = f"Recuperaciones de Enlace SDR: {s.reinicios_rtldavis} (Última: {s.ultimo_reinicio})"
+            # DIAGNOSTICS
+            self.draw_container(stdscr, 17, 1, 8, panel_w_bottom, "RF SYSTEM DIAGNOSTICS (SDR)")
+            rf_info = f"📡 FREQ: {s.freq} MHz │ CHANNEL: {s.channel}/51 │ TX BATTERY: {h.battery}"
+            self.safe_addstr(stdscr, 19, 3, rf_info, curses.color_pair(1) | curses.A_BOLD)
+            self.safe_addstr(stdscr, 19, panel_w_bottom - 26, f" {s.csv_status} ", curses.color_pair(2) | curses.A_REVERSE)
+
+            telemetry = f"Valid Frames: {s.packets} │ CRC Failures: {s.crc_rejected_packets} │ TX Discards: {s.id_rejected_packets}"
+            self.safe_addstr(stdscr, 20, 3, telemetry, curses.color_pair(6))
+
+            watchdog_txt = f"SDR Link Recoveries: {s.rtldavis_restarts} (Last: {s.last_restart})"
             self.safe_addstr(stdscr, 21, 3, watchdog_txt, curses.color_pair(4))
-                
-            self.safe_addstr(stdscr, 22, panel_w_bottom - 20, "['Q'] Terminar", curses.color_pair(3) | curses.A_BOLD)
-            self.safe_addstr(stdscr, 23, 3, f"Buffer Binario: {s.ultima_trama[:60]}...", curses.color_pair(6) | curses.A_DIM)
+
+            self.safe_addstr(stdscr, 22, panel_w_bottom - 20, "['Q'] Quit", curses.color_pair(3) | curses.A_BOLD)
+            self.safe_addstr(stdscr, 23, 3, f"Binary Buffer: {s.last_frame[:60]}...", curses.color_pair(6) | curses.A_DIM)
 
             stdscr.refresh()
             time.sleep(0.25)
 
 if __name__ == "__main__":
-    db_local = GestorAlmacenamiento(DIR_CAPTURAS)
-    monitor = NucleoMonitoreo(db_local)
-    interfaz = MotorInterfazTUI(monitor)
-    
-    def handler_interrupcion(_sig, _frame):
-        monitor.finalizar()
+    local_db = StorageManager(CAPTURES_DIR)
+    monitor = MonitoringCore(local_db)
+    interface = TUIInterfaceEngine(monitor)
+
+    def interrupt_handler(_sig, _frame):
+        monitor.shutdown()
         sys.exit(0)
-        
-    signal.signal(signal.SIGINT, handler_interrupcion)
-    signal.signal(signal.SIGTERM, handler_interrupcion)
+
+    signal.signal(signal.SIGINT, interrupt_handler)
+    signal.signal(signal.SIGTERM, interrupt_handler)
 
     try:
-        logger.info("===== INICIO DEL SISTEMA DAVIS VP2 =====")
-        curses.wrapper(interfaz.ejecutar)
+        logger.info("===== DAVIS VP2 SYSTEM STARTUP =====")
+        curses.wrapper(interface.run)
     finally:
-        logger.info("===== APAGADO DEL SISTEMA =====")
-        monitor.finalizar()
+        logger.info("===== SYSTEM SHUTDOWN =====")
+        monitor.shutdown()

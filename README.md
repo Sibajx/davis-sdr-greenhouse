@@ -5,141 +5,142 @@
 ![Python](https://img.shields.io/badge/python-3.9%2B-blue.svg)
 ![Status](https://img.shields.io/badge/paper-in%20review-yellow.svg)
 
-Arquitectura IoT de borde (edge), basada en radio definida por software (SDR), para
-la recepción, validación, decodificación y almacenamiento en tiempo real de la
-telemetría meteorológica de una estación **Davis Vantage Pro 2** (banda ISM
-902–928 MHz), pensada como capa de datos externa para el control futuro de un
-sistema de secado en invernadero (cyber-physical drying system).
+Edge Internet-of-Things (IoT) architecture, based on software-defined radio
+(SDR), for the real-time reception, validation, decoding, and storage of
+weather telemetry from a **Davis Vantage Pro 2** station (902-928 MHz ISM
+band), designed as an external data layer for the future control of a
+greenhouse fruit-drying system (cyber-physical drying system).
 
-Este repositorio acompaña el artículo:
+This repository accompanies the paper:
 
 > Juárez-Rosales, M.U., Ramírez-Sibaja, A., Cruz-Martínez, M.S., Nicolas-Bautista, H.,
-> Sánchez-Domínguez, D. y Hernández-Flores, O.A. *A Low-Cost SDR-Based Edge IoT
+> Sánchez-Domínguez, D. and Hernández-Flores, O.A. *A Low-Cost SDR-Based Edge IoT
 > Architecture for Real-Time Decoding of Weather Telemetry in Cyber-Physical
 > Greenhouse Drying Systems*. International Journal of Sustainable Agricultural
-> Management and Informatics (en revisión).
+> Management and Informatics (in review).
 
-## Resultados principales (evaluación de campo, 12–16 junio 2026)
+## Key results (field evaluation, June 12-16, 2026)
 
-| Métrica | Valor |
+| Metric | Value |
 |---|---|
-| Registros validados en base de datos | 7,167 |
-| Paquetes interceptados (estimado) | 184,508 |
+| Validated database records | 7,167 |
+| Estimated intercepted packets | 184,508 |
 | Packet Delivery Ratio (PDR) | 93.23% |
-| Intervenciones del watchdog | 154 |
-| Tiempo medio de recuperación (MTTR) | 1.03 s |
-| Intervalo medio de escritura en BD | 60.18 s |
-| Jitter de escritura | 0.3815 s |
-| MTBF empírico | 65.81 min |
-| Parámetro de forma Weibull (β) | 0.3552 |
+| Watchdog interventions | 154 |
+| Mean time to recovery (MTTR) | 1.03 s |
+| Mean database writing interval | 60.18 s |
+| Writing jitter | 0.3815 s |
+| Empirical MTBF | 65.81 min |
+| Weibull shape parameter (β) | 0.3552 |
 
-## Estructura del repositorio
+## Repository structure
 
 ```
-├── paper/            Manuscrito completo (PDF)
-├── src/               Código fuente del daemon de adquisición (Python, stdlib)
+├── paper/            Full manuscript (PDF)
+├── src/               Source code of the acquisition daemon (Python, stdlib)
 ├── data/
-│   ├── raw/           Muestras crudas / payloads hexadecimales (si se agregan)
-│   └── processed/     Dataset limpio usado para las figuras del paper
-├── logs/              Fragmento representativo del log de operación
-├── figures/           Figuras del paper (temperatura, humedad, solar/UV)
-│   └── exploratorio/  Gráficas exploratorias adicionales (no incluidas en el paper)
-├── scripts/           Scripts auxiliares (generación de figuras, análisis)
-├── tests/             Pruebas unitarias (CRC-16, decodificación de dirección)
-├── docs/              Documentación de arquitectura y notas técnicas
-└── .github/workflows/ Integración continua (CI): compilación, lint y tests
+│   ├── raw/           Raw samples / hexadecimal payloads (if added)
+│   └── processed/     Cleaned dataset used for the paper's figures
+├── logs/              Representative excerpt of the operation log
+├── figures/           Paper figures (temperature, humidity, solar/UV)
+│   └── exploratory/   Additional exploratory plots (not included in the paper)
+├── scripts/           Auxiliary scripts (figure generation, analysis)
+├── tests/             Unit tests (CRC-16, direction decoding)
+├── docs/              Architecture documentation and technical notes
+└── .github/workflows/ Continuous integration (CI): build, lint, and tests
 ```
 
-## Requisitos
+## Requirements
 
-- Python 3.9+ (solo librería estándar — ver `requirements.txt`)
-- [`rtldavis`](https://github.com/rtldavis) instalado y accesible en el `PATH`
-  (binario externo, no es un paquete de Python; se invoca vía `subprocess`)
-- Un receptor RTL-SDR conectado por USB
-- Linux (probado en ARM/aarch64, Ubuntu Server)
+- Python 3.9+ (standard library only — see `requirements.txt`)
+- [`rtldavis`](https://github.com/rtldavis) installed and available on the
+  `PATH` (external binary, not a Python package; invoked via `subprocess`)
+- An RTL-SDR receiver connected via USB
+- Linux (tested on ARM/aarch64, Ubuntu Server)
 
-## Uso
+## Usage
 
 ```bash
-# 1. Instalar y verificar rtldavis
-rtldavis -tf US   # debe detectar actividad de la estación Davis
+# 1. Install and verify rtldavis
+rtldavis -tf US   # should detect activity from the Davis station
 
-# 2. Ejecutar el monitor
+# 2. Run the monitor
 python3 src/davis_monitor.py
 ```
 
-El script:
-- Lanza `rtldavis` en un hilo dedicado y seis lecturas de payload hexadecimal.
-- Valida cada trama con CRC-16 (descarta tramas corruptas).
-- Decodifica viento, temperatura, humedad, radiación solar, índice UV y lluvia.
-- Escribe un log rotativo (`~/capturas_davis/davis_monitor.log`) y un respaldo CSV local.
-- Reinicia automáticamente el subproceso SDR si no detecta actividad de RF en 30 s
-  (watchdog).
+The script:
+- Launches `rtldavis` in a dedicated thread and reads hexadecimal payloads.
+- Validates each frame with CRC-16 (discards corrupted frames).
+- Decodes wind, temperature, humidity, solar radiation, UV index, and rain.
+- Writes a rotating log (`~/davis_captures/davis_monitor.log`) and a local
+  CSV backup.
+- Automatically restarts the SDR subprocess if no RF activity is detected
+  within 30 s (watchdog).
 
-## Pruebas
+## Tests
 
-Las funciones puras de decodificación (validación CRC-16, conversión de
-grados a punto cardinal) tienen pruebas unitarias en `tests/`:
+The pure decoding functions (CRC-16 validation, degrees-to-cardinal
+conversion) have unit tests in `tests/`:
 
 ```bash
 pip install pytest
 pytest tests/ -v
 ```
 
-Estas pruebas se ejecutan automáticamente en cada push/PR vía GitHub Actions
-(`.github/workflows/ci.yml`), junto con una verificación de sintaxis
-(`py_compile`) y un lint mínimo (`flake8`, solo errores graves de sintaxis o
-nombres indefinidos).
+These tests run automatically on every push/PR via GitHub Actions
+(`.github/workflows/ci.yml`), along with a syntax check (`py_compile`) and
+a minimal lint (`flake8`, serious syntax or undefined-name errors only).
 
-## Mejoras recomendadas / trabajo futuro sobre el código
+## Recommended improvements / future work on the code
 
-- Separar constantes de configuración (`TIEMPO_MAX_ESPERA_SENSORES`,
-  `TX_ID_OBJETIVO`, rutas de directorios) en un archivo `config.yaml` o
-  variables de entorno, en lugar de constantes embebidas en el módulo.
-- Ampliar la cobertura de pruebas a las funciones de decodificación de
-  temperatura, humedad, radiación solar e índice UV (actualmente solo se
-  prueban CRC-16 y dirección de viento).
-- Agregar payloads de ejemplo reales en `data/raw/` para usarlos como casos
-  de prueba deterministas.
-- Notebook de validación contra datalogger Davis (`scripts/`) cuando esos
-  datos estén disponibles, calculando bias, MAE, RMSE y correlación, tal
-  como se describe en la sección 3.8 del paper.
+- Separate configuration constants (`MAX_SENSOR_WAIT_TIME`,
+  `TARGET_TX_ID`, directory paths) into a `config.yaml` file or environment
+  variables, instead of constants embedded in the module.
+- Expand test coverage to the temperature, humidity, solar radiation, and
+  UV index decoding functions (currently only CRC-16 and wind direction
+  are tested).
+- Add real sample payloads to `data/raw/` to use as deterministic test
+  cases.
+- Notebook for validation against the Davis datalogger (`scripts/`) once
+  that data is available, computing bias, MAE, RMSE, and correlation, as
+  described in section 3.8 of the paper.
 
-## Datos
+## Data
 
-`data/processed/dataset_fase1_limpio.csv` contiene el dataset limpio (7,168 filas,
-1 min de resolución) usado para generar las Figuras 2–4 del paper: temperatura,
-humedad relativa, viento, radiación solar, índice UV, lluvia y estado de batería
-del transmisor.
+`data/processed/dataset_phase1_clean.csv` contains the cleaned dataset
+(7,168 rows, 1-minute resolution) used to generate Figures 2-4 of the
+paper: temperature, relative humidity, wind, solar radiation, UV index,
+rain, and transmitter battery state.
 
-## Disponibilidad de datos y código
+## Data and code availability
 
-El código fuente completo, los logs anonimizados, los datasets procesados y los
-scripts de generación de figuras se depositarán en un repositorio público antes
-del envío final o revisión por pares, o estarán disponibles bajo petición razonable
-al autor de correspondencia (ver sección *Data and Code Availability* del paper).
-El log completo de operación (>10,000 líneas) no se incluye completo en este
-repositorio por su tamaño y redundancia; `logs/davis_monitor_sample.log` contiene
-un fragmento representativo.
+The full source code, anonymized logs, processed datasets, and
+figure-generation scripts will be deposited in a public repository before
+final submission or peer review, or will be made available upon reasonable
+request to the corresponding author (see the "Data and Code Availability"
+section of the paper). The full operation log (>10,000 lines) is not
+included in full in this repository due to its size and redundancy;
+`logs/davis_monitor_sample.log` contains a representative excerpt.
 
-## Declaración ética y de interoperabilidad
+## Ethical and interoperability statement
 
-Este flujo de decodificación SDR fue desarrollado con fines de investigación
-académica e interoperabilidad, para integrar un equipo de sensado ambiental
-propiedad de los autores en un sistema ciberfísico agrícola propio. El sistema
-realiza **recepción pasiva** de telemetría de la propia estación y no está
-diseñado para interferir con sistemas de comunicación de terceros. Verifica la
-normativa de radiofrecuencia local antes de cualquier despliegue en campo.
+This SDR decoding workflow was developed for academic research and
+interoperability purposes, to integrate environmental sensing equipment
+owned by the authors into a custom agricultural cyber-physical system. The
+system performs **passive reception** of telemetry from the authors' own
+station and is not intended to interfere with third-party communication
+systems. Verify local radiofrequency regulations before any field
+deployment.
 
-## Cómo citar
+## How to cite
 
-Cita pendiente de asignación de volumen/número/DOI tras la publicación final.
-Mientras tanto, referencia este repositorio y el título del manuscrito indicado
-arriba.
+Citation pending assignment of volume/issue/DOI after final publication.
+In the meantime, reference this repository and the manuscript title listed
+above.
 
-## Licencia
+## License
 
-Código bajo licencia MIT (ver `LICENSE`). El manuscrito y las figuras del paper
-están sujetos a los términos de copyright de la revista (Inderscience
-Enterprises Ltd.) y se incluyen aquí únicamente como referencia del trabajo
-correspondiente al código.
+Code under the MIT license (see `LICENSE`). The paper manuscript and its
+figures are subject to the journal's copyright terms (Inderscience
+Enterprises Ltd.) and are included here only as a reference for the
+corresponding code.

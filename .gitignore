@@ -5,15 +5,15 @@ __pycache__/
 .venv/
 venv/
 
-# Logs de operación completos (no incluir el log crudo completo en el repo)
+# Full operation logs (do not include the full raw log in the repo)
 *.log
-capturas_davis/
+davis_captures/
 
-# Sistema
+# System
 .DS_Store
 Thumbs.db
 
-# Datos crudos grandes (si se agregan payloads binarios completos)
+# Large raw data (if full binary payload captures are added)
 data/raw/*.bin
 data/raw/*.iq
 

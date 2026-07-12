@@ -1,5 +1,5 @@
 cff-version: 1.2.0
-message: "Si utilizas este software o repositorio, por favor cita el artículo asociado."
+message: "If you use this software or repository, please cite the associated article."
 title: "A Low-Cost SDR-Based Edge IoT Architecture for Real-Time Decoding of Weather Telemetry in Cyber-Physical Greenhouse Drying Systems"
 type: software
 authors:
@@ -36,4 +36,4 @@ preferred-citation:
       given-names: "Omar A."
   journal: "International Journal of Sustainable Agricultural Management and Informatics"
   status: "in-review"
-  notes: "Actualiza volume/issue/year/doi una vez asignados por la revista."
+  notes: "Update volume/issue/year/doi once assigned by the journal."
