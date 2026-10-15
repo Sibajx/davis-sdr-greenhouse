@@ -1,6 +1,6 @@
 # System architecture
 
-See Figure 1 of the paper (`paper/IJSAMI.pdf`, section 3.6) for the full
+See Figure 1 of the paper (`paper/IJSAMI.pdf`, section 3.3) for the full
 diagram. Layer-by-layer summary:
 
 ## 1. Sensing and RF layer
@@ -35,8 +35,9 @@ diagram. Layer-by-layer summary:
   `~/davis_captures/davis_monitor.log`.
 - **Local CSV backup** as a redundant black-box log in case of network or
   database failure.
-- **Ingestion into a time-series database** (e.g. InfluxDB) every ~60 s
-  (see Table 2 of the paper: mean interval 60.18 s, jitter 0.3815 s).
+- **SQLite archive** (WeeWX) in write-ahead logging (WAL) mode, written at
+  nominal 60 s intervals, so readers never block the writer (see Table 4 of
+  the paper: mean interval 60.20 s, jitter 0.398 s).
 - **Dashboard/API** for querying the latest state (outside the scope of
   this repository in its current form).
 - **Future CPS controller** (ESP32/PLC) for ventilation, heating, and vent
@@ -44,13 +45,16 @@ diagram. Layer-by-layer summary:
 
 ## Reported reliability metrics
 
-| Metric | Formula (see paper, section 3.9) | Result |
+Field evaluation, 29 Aug–4 Sep 2026 (paper, Table 4). Formulas in sections
+3.3 (PDR) and 3.8 (the rest).
+
+| Metric | Formula | Result |
 |---|---|---|
-| PDR | N_valid / (N_valid + N_crc_errors) × 100 | 93.23% |
-| MTTR | average of watchdog recovery times | 1.03 s |
-| Writing jitter | standard deviation of intervals between DB writes | 0.3815 s |
-| Empirical MTBF | mean time between receiver failures | 65.81 min |
-| Weibull β | fit of failure inter-arrival times to a Weibull distribution | 0.3552 (<1, early-life failures) |
+| PDR | N_valid / (N_valid + N_crc_errors) × 100 | 95.10% |
+| MTTR | average of watchdog recovery times | 1.0 s |
+| Writing jitter | standard deviation of intervals between DB writes | 0.398 s |
+| Empirical MTBF | mean time between receiver failures | 90.95 min |
+| Weibull β | fit of failure inter-arrival times to a Weibull distribution | 0.354 (<1, early-life failures) |
 
 ## Decoded packet identifiers (`PacketType`)
 
