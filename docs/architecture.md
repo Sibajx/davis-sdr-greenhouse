@@ -1,6 +1,6 @@
 # System architecture
 
-See Figure 1 of the paper (`paper/IJSAMI.pdf`, section 3.3) for the full
+See Figure 1 of the paper (`paper/IJSAMI.pdf`, section 3.1) for the full
 diagram. Layer-by-layer summary:
 
 ## 1. Sensing and RF layer

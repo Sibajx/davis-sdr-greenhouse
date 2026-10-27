@@ -1,15 +1,15 @@
-# Davis Vantage Pro 2 Telemetry Decoding via RTL-SDR in Greenhouse Environments
+# A Low-Cost SDR-Edge Architecture for Weather Telemetry in Cyber-Physical Greenhouse Drying Systems
 
 [![CI/CD Pipeline](https://github.com/Sibajx/davis-sdr-greenhouse/actions/workflows/ci.yml/badge.svg)](https://github.com/Sibajx/davis-sdr-greenhouse/actions)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
-[![Publication Status](https://img.shields.io/badge/Paper-Published_in_IJSAMI_Vol._20,_2026-blue.svg)](paper/)
+[![Publication Status](https://img.shields.io/badge/Paper-In_review_IJSAMI_(362170)-orange.svg)](paper/)
 
-Experimental validation and SDR telemetry decoding system for Davis Vantage Pro2 weather stations operating in the 902–928 MHz ISM band within greenhouse agricultural monitoring setups.
+Software-defined radio (RTL-SDR) edge architecture that receives, validates (CRC-16), decodes and stores the weather telemetry of a Davis Vantage Pro 2 station in the 902–928 MHz ISM band, for greenhouse drying monitoring and control.
 
 ---
 
 ## 📄 Manuscript & Publication
-* **Status:** Published in *IJSAMI Vol. 20, 2026*
+* **Status:** In review, *International Journal of Sustainable Agricultural Management and Informatics* (IJSAMI), manuscript 362170. Volume and issue to be assigned.
 * **Full Manuscript PDF:** Available in [`paper/`](paper/)
 * **Reproducibility Guide:** See [`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md)
 
@@ -33,9 +33,11 @@ Experimental validation and SDR telemetry decoding system for Davis Vantage Pro2
 ---
 
 ## 🛠️ Hardware Requirements
-* **Single Board Computer:** Raspberry Pi 5
-* **SDR Receiver:** Nooelec NESDR SMArt v5 (RTL2832U / R820T2)
-* **Weather Station:** Davis Vantage Pro2 (915 MHz ISM Band)
+* **Single Board Computer:** Raspberry Pi 5 (16 GB RAM, Ubuntu aarch64)
+* **SDR Receiver:** Nooelec NESDR SMArt (RTL2832U / R820T2, 0.5 PPM TCXO)
+* **Receiving Antenna:** 915 MHz fibreglass LoRa antenna (RG58 coaxial cable)
+* **Weather Station:** Davis Vantage Pro2 (902–928 MHz ISM band)
+* **Field Site:** Oaxaca de Juárez, Oaxaca, Mexico (~1,550 m a.s.l.), receiver ~15 m from the station
 
 ---
 

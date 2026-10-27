@@ -1,6 +1,6 @@
 cff-version: 1.2.0
 message: "If you use this software or repository, please cite the associated article."
-title: "A Low-Cost SDR-Based Edge IoT Architecture for Real-Time Decoding of Weather Telemetry in Cyber-Physical Greenhouse Drying Systems"
+title: "A Low-Cost SDR-Edge Architecture for Weather Telemetry in Cyber-Physical Greenhouse Drying Systems"
 type: software
 authors:
   - family-names: "Juárez-Rosales"
@@ -20,7 +20,7 @@ repository-code: "https://github.com/Sibajx/davis-sdr-greenhouse"
 license: MIT
 preferred-citation:
   type: article
-  title: "A Low-Cost SDR-Based Edge IoT Architecture for Real-Time Decoding of Weather Telemetry in Cyber-Physical Greenhouse Drying Systems"
+  title: "A Low-Cost SDR-Edge Architecture for Weather Telemetry in Cyber-Physical Greenhouse Drying Systems"
   authors:
     - family-names: "Juárez-Rosales"
       given-names: "Mario U."
