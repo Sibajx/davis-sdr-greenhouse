@@ -30,6 +30,8 @@ Software-defined radio (RTL-SDR) edge architecture that receives, validates (CRC
 | **MAE Temperature** | 0.156 °C |
 | **MAE Humidity** | 0.352 % |
 
+Values as published in the paper. See [`docs/REPRODUCIBILITY.md`](docs/REPRODUCIBILITY.md), section 4.1, for how they relate to the raw data in `data/raw/`.
+
 ---
 
 ## 🛠️ Hardware Requirements

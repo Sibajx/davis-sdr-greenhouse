@@ -56,6 +56,9 @@ Field evaluation, 29 Aug–4 Sep 2026 (paper, Table 4). Formulas in sections
 | Empirical MTBF | mean time between receiver failures | 90.95 min |
 | Weibull β | fit of failure inter-arrival times to a Weibull distribution | 0.354 (<1, early-life failures) |
 
+Values as published. How they relate to the raw log (counter windows, MTBF
+definition, restart grouping) is in `docs/REPRODUCIBILITY.md`, section 4.1.
+
 ## Decoded packet identifiers (`PacketType`)
 
 | Name | Hex code |

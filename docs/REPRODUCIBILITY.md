@@ -73,8 +73,15 @@ Table 3 values are stored in `figures/tabla_comparacion_promediado_davis.csv`.
 The values below are the ones reported in the paper for the field evaluation (29 Aug – 4 Sep 2026). The reliability script (`generar_figura_reliability_timeline_EN.py`) uses the window 29 Aug – 3 Sep when it reads the log, and prints the MTBF it computes for that window.
 * **Total Validated Records:** 8,612
 * **Packet Delivery Ratio (PDR):** 95.10%
-* **MTBF:** 90.95 min (paper text, abstract and Table 4)
-
-**MTBF discrepancy.** The paper's Figure 9(b) shows an MTBF of 71.70 min, which is the value `generar_figura_reliability_timeline_EN.py` computes from `davis_monitor.log` for 29 Aug – 3 Sep (95 watchdog events, 94 intervals between them). The 90.95 min value in the paper text and table cannot be reproduced from the supplied log with the window used by the script. Other windows give different values (full log, 200 events: 65.94 min; 29 Aug – 4 Sep, 169 events: 48.64 min). The script output is the reproducible value; the source of 90.95 min is not documented here.
+* **MTBF:** 90.95 min
 * **MTTR:** 1.0 s
 * **Availability:** 99.98%
+
+### 4.1 Notes on these values
+
+The paper's numbers are left as published. The notes below were recomputed from `data/raw/davis_monitor.log` and the daily CSVs for the window 29 Aug 00:00 – 3 Sep 23:59 (8,640 min), and explain how each value is obtained and where it differs from the figure scripts.
+
+* **MTBF.** 90.95 min = 8,640 min / 95 watchdog restarts (observation time over number of restarts). Figure 9(b) shows 71.70 min because `generar_figura_reliability_timeline_EN.py` averages the 94 intervals between consecutive restarts, which leaves out the time before the first and after the last restart.
+* **Frame counters.** The daemon's HEARTBEAT counters are cumulative since the last daemon start (28 Aug 15:57), not per evaluation window. At the end of the log they read 230,798 valid frames, 11,899 `no_hex` lines (lines that were not hexadecimal payloads) and `crc_fail = 0`. The PDR of 95.10 % equals valid / (valid + `no_hex`); the daemon recorded no CRC-16 rejections. Inside the window the counters give 198,838 valid frames and 9,573 `no_hex` lines.
+* **MTTR and availability.** 1.0 s is the pause between stopping and relaunching rtldavis. The watchdog fires after 30 s without RF, so each restart implies at least about 31 s without new data, and 62 of the 94 intervals between restarts are shorter than 1 min (retries within the same outage). Grouping restarts less than 5 min apart gives 26 interruptions, a time to recovery of 143–172 s each and an availability of 99.14–99.29 %.
+* **Records.** 40 of the 8,612 records have `Muestras_Ventana = 0` (written without new RF samples).
