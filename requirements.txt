@@ -2,10 +2,19 @@
 #   subprocess, curses, threading, time, os, re, csv, sys, signal, select,
 #   struct, logging, enum, dataclasses, collections, datetime, typing
 #
-# There are no external pip dependencies.
+# There are no external pip dependencies for the daemon.
+#
+# Figure scripts (scripts/scripts_Figures/) need the packages listed at the
+# end of this file. Versions are the ones used to generate the figures.
 #
 # External dependency NOT installable via pip:
 #   rtldavis  -> third-party binary that decodes the RF telemetry from the
 #                Davis Vantage Pro 2 station. Must be compiled/installed
 #                separately and be available on the system PATH.
 #                Reference: https://github.com/lheijst/rtldavis (see docs/REPRODUCIBILITY.md, 2.1)
+
+# Figure scripts (scripts/scripts_Figures/)
+matplotlib==3.11.2
+numpy==2.5.4
+pandas==3.1.0
+scipy==1.18.1

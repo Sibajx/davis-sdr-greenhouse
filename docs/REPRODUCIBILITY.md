@@ -37,7 +37,7 @@ The figure scripts read CSV and log files by bare name, from the **current worki
 | `davis_wifi_logger.csv` | Figure 2, Supplementary S1–S6 | Davis reference station records (validation) |
 | `davis_monitor.log` | Figure 9 | Daemon log: watchdog restarts and database writes |
 
-These files are not yet part of the repository; see `data/raw/README.md`.
+These files are versioned in `data/raw/`, except `davis_monitor.log`, which is ignored by `.gitignore` and must be copied there manually (see `data/raw/README.md`).
 
 ## 3. Reproduction Steps
 
