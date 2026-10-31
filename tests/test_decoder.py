@@ -3,12 +3,15 @@ Unit tests for the pure decoding functions in davis_monitor.py (DavisDecoder).
 
 Note: importing davis_monitor.py runs a few module-level side effects
 (creates ~/davis_captures/ and configures file logging). This is a known
-side effect of the original script and does not affect the outcome of
-these tests, but it would be worth refactoring in the future to separate
-configuration from pure logic (see README, "Recommended improvements").
+side effect of the original script, kept as published. To avoid touching
+the real home directory, HOME points to a temporary directory before the
+import (see README, "Recommended improvements").
 """
 import os
 import sys
+import tempfile
+
+os.environ["HOME"] = tempfile.mkdtemp(prefix="davis_test_home_")
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
